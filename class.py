@@ -83,7 +83,20 @@ class AnalyzeNetwork:
                 if device_info not in devices_array:
                     devices_array.append(device_info)
         return devices_array
-        
+    def guess_os(self, device_info):
+        """
+        Given a device info dict, tries to guess the OS of the device.
+        Works with ttl - if ttl>64 its windows, else probably linux.
+        """
+        for packet in self.packets:
+            if Ether in packet:
+                if packet[Ether].src == device_info["mac"]:
+                    if IP in packet:
+                        ttl = packet[IP].ttl
+                        if ttl > 64:
+                            return "Windows"
+                        else:
+                            return "Linux/Unix"
     def __repr__(self):
         raise NotImplementedError
     def __str__(self):
@@ -91,9 +104,12 @@ class AnalyzeNetwork:
     
     
 if __name__ == "__main__":
-    analyzer = AnalyzeNetwork("pcaps/pcap-00.pcapng")
+    analyzer = AnalyzeNetwork("pcaps/pcap-01.pcapng")
     print(analyzer.get_info())
     print(analyzer.get_ips())
     print(analyzer.get_macs())
+    for i in analyzer.get_macs():
+        print(i)
+        print(analyzer.guess_os(analyzer.get_info_by_mac(i)[0]))
     
     
