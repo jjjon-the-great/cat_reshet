@@ -8,28 +8,45 @@ class AnalyzeNetwork:
         """
         self.pcap_path = pcap_path
         self.packets = rdpcap(pcap_path)
-        
+        self.info = self.get_info()
     def get_ips(self):
         """
         Returns a list of all ip addresses(strings) that appear in the pcap
         """
-        raise NotImplementedError
+        ips = []
+        for device in self.info:
+            if device["ip"] != "Unknown" and device["ip"] not in ips:
+                ips.append(device["ip"])
+        return ips
     def get_macs(self):
         """
         Returns a list of all MAC addresses(strings) that appear in the pcap
         """
-        
-        raise NotImplementedError
+        macs = []
+        for device in self.info:
+            if device["mac"] != "Unknown" and device["mac"] not in macs:
+                macs.append(device["mac"])
+        return macs
     def get_info_by_mac(self, mac):
         """
         returns a dict with all information about the device with the given mac address
         """
-        raise NotImplementedError
+        # there might be multiple devices with the same mac. return a list of dicts
+        devices = []
+        for device in self.info:    
+            if device["mac"] == mac:
+                devices.append(device)
+        return devices
     def get_info_by_ip(self, ip):
         """
         returns a dict with all information about the device with the given ip address
         """
-        raise NotImplementedError
+        # there might be multiple devices with the same ip. return a list of dicts
+        devices = []
+        for device in self.info:    
+            if device["ip"] == ip:
+                devices.append(device)
+        return devices
     def get_info(self):
         """
         returns a list of dicts with all information about every device.
@@ -38,6 +55,7 @@ class AnalyzeNetwork:
         devices_array = []
         for packet in self.packets:
             if Ether in packet:
+                #sender info
                 device_info = {}
                 device_info["mac"] = packet[Ether].src
                 device_info["vendor"] = mac_vendor_lookup.MacLookup().lookup(packet[Ether].src)
@@ -45,6 +63,21 @@ class AnalyzeNetwork:
                     device_info["ip"] = packet[IP].src
                 elif ARP in packet:
                     device_info["ip"] = packet[ARP].psrc
+                else:
+                    device_info["ip"] = "Unknown"
+                if device_info not in devices_array:
+                    devices_array.append(device_info)
+                #receiver info
+                
+                device_info = {}
+                if packet[Ether].dst == "ff:ff:ff:ff:ff:ff":
+                    continue
+                device_info["mac"] = packet[Ether].dst
+                device_info["vendor"] = mac_vendor_lookup.MacLookup().lookup(packet[Ether].dst)
+                if IP in packet:
+                    device_info["ip"] = packet[IP].dst
+                elif ARP in packet:
+                    device_info["ip"] = packet[ARP].pdst
                 else:
                     device_info["ip"] = "Unknown"
                 if device_info not in devices_array:
@@ -60,3 +93,7 @@ class AnalyzeNetwork:
 if __name__ == "__main__":
     analyzer = AnalyzeNetwork("pcaps/pcap-00.pcapng")
     print(analyzer.get_info())
+    print(analyzer.get_ips())
+    print(analyzer.get_macs())
+    
+    
