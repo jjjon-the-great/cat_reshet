@@ -14,18 +14,24 @@ class AnalyzeNetwork:
         Returns a list of all ip addresses(strings) that appear in the pcap
         """
         ips = []
-        for device in self.info:
-            if device["ip"] != "Unknown" and device["ip"] not in ips:
-                ips.append(device["ip"])
+        for packet in self.packets:
+            if IP in packet:
+                if packet[IP].src not in ips:
+                    ips.append(packet[IP].src)
+                if packet[IP].dst != "255.255.255.255" and packet[IP].dst not in ips:
+                    ips.append(packet[IP].dst)
         return ips
     def get_macs(self):
         """
         Returns a list of all MAC addresses(strings) that appear in the pcap
         """
         macs = []
-        for device in self.info:
-            if device["mac"] != "Unknown" and device["mac"] not in macs:
-                macs.append(device["mac"])
+        for packet in self.packets:
+            if Ether in packet:
+                if packet[Ether].src not in macs:
+                    macs.append(packet[Ether].src)
+                if packet[Ether].dst != "ff:ff:ff:ff:ff:ff" and packet[Ether].dst not in macs:
+                    macs.append(packet[Ether].dst)
         return macs
     def get_info_by_mac(self, mac):
         """
@@ -44,78 +50,92 @@ class AnalyzeNetwork:
         # there might be multiple devices with the same ip. return a list of dicts
         devices = []
         for device in self.info:    
-            if device["ip"] == ip:
+            if ip in device["ip"]:
                 devices.append(device)
         return devices
+    
+    def establish_device(self, mac):
+        """
+        establishes all information about the device with the given mac address
+        returns a dict with the information about it.
+        """
+        device_info = {}
+        device_info["mac"] = mac
+        device_info["vendor"] = mac_vendor_lookup.MacLookup().lookup(mac)
+        device_info["ip"] = []
+        device_info["os"] = {"from_ttl": "Unknown", "from_ping_payload": "Unknown"}
+        
+        packets_from_device, packets_to_device = self.find_all_packets_of_device(mac)
+        for packet in packets_from_device:
+            if IP in packet:
+                if packet[IP].src not in device_info["ip"]:
+                    device_info["ip"].append(packet[IP].src)
+            self.guess_os_from_packet(device_info, packet)
+        for packet in packets_to_device:
+            if IP in packet:
+                if packet[IP].dst not in device_info["ip"]:
+                    device_info["ip"].append(packet[IP].dst)
+        return device_info
+    
+    def guess_os_from_packet(self, device_info, packet):
+        """
+        tries to guess the OS of the device from the given packet.
+        updates the device_info dict in place.
+        """
+        if IP in packet:
+            ttl = packet[IP].ttl
+            if packet[IP].ttl > 64:
+                os_from_ttl = "Windows"
+            else:
+                os_from_ttl = "Linux"
+            self.update_device_os_field(device_info, "from_ttl", os_from_ttl)
+                
+        if ICMP in packet:
+            raw_data = bytes(packet)
+            if b"\x61\x62\x63\x64\x65\x66\x67\x68\x69" in raw_data:
+                os_from_content = "Windows"
+            elif b"\x10\x11\x12\x13\x14\x15\x16\x17\x18" in raw_data:
+                os_from_content = "Linux"
+            else:
+                os_from_content = "Unknown"
+            self.update_device_os_field(device_info, "from_ping_payload", os_from_content)
+    
+    def update_device_os_field(self, device_info, field, new_value):
+        """
+        updates the os field of a device_info dict.
+        if the field is "Unknown", sets it to new_value. If conflict found, sets it to Conflict
+        """
+        if device_info["os"][field] == "Unknown":
+            device_info["os"][field] = new_value
+        elif device_info["os"][field] != new_value:
+            device_info["os"][field] = "Conflict"
+    
+    def find_all_packets_of_device(self, mac):
+        """"
+        finds all packets coming from or to the device with the given mac address
+        returns a tuple of two lists: (packets_from_device, packets_to_device)
+        """
+        packets_from_device = []
+        packets_to_device = []
+        for packet in self.packets:
+            if Ether in packet:
+                if packet[Ether].src == mac:
+                    packets_from_device.append(packet)
+                elif packet[Ether].dst == mac:
+                    packets_to_device.append(packet)
+        return (packets_from_device, packets_to_device)
+    
     def get_info(self):
         """
         returns a list of dicts with all information about every device.
-        If a device has multiple IPs, multiple dicts will be present in the list.
         """
         devices_array = []
-        for packet in self.packets:
-            if Ether in packet:
-                #sender info
-                device_info = {}
-                device_info["mac"] = packet[Ether].src
-                device_info["vendor"] = mac_vendor_lookup.MacLookup().lookup(packet[Ether].src)
-                if IP in packet:
-                    device_info["ip"] = packet[IP].src
-                elif ARP in packet:
-                    device_info["ip"] = packet[ARP].psrc
-                else:
-                    device_info["ip"] = "Unknown"
-                device_info["os_from_ttl"] = self.guess_os_from_ttl(device_info)
-                device_info["os_from_ping_payload"] = self.guess_os_from_content(device_info)
-                if device_info not in devices_array:
-                    devices_array.append(device_info)
-                #receiver info
-                
-                device_info = {}
-                if packet[Ether].dst == "ff:ff:ff:ff:ff:ff":
-                    continue
-                device_info["mac"] = packet[Ether].dst
-                device_info["vendor"] = mac_vendor_lookup.MacLookup().lookup(packet[Ether].dst)
-                if IP in packet:
-                    device_info["ip"] = packet[IP].dst
-                elif ARP in packet:
-                    device_info["ip"] = packet[ARP].pdst
-                else:
-                    device_info["ip"] = "Unknown"
-                device_info["os_from_ttl"] = self.guess_os_from_ttl(device_info)
-                device_info["os_from_ping_payload"] = self.guess_os_from_content(device_info)
-                if device_info not in devices_array:
-                    devices_array.append(device_info)
+        for mac in self.get_macs():
+            device_info = self.establish_device(mac)
+            devices_array.append(device_info)
         return devices_array
-    def guess_os_from_ttl(self, device_info):
-        """
-        Given a device info dict, tries to guess the OS of the device.
-        Works with ttl - if ttl>64 its windows, else probably linux.
-        """
-        for packet in self.packets:
-            if Ether in packet:
-                if packet[Ether].src == device_info["mac"]:
-                    if IP in packet:
-                        ttl = packet[IP].ttl
-                        if ttl > 64:
-                            return "Windows"
-                        else:
-                            return "Linux/Windows"
-        return "Unknown"
-    def guess_os_from_content(self, device_info):
-        """
-        Given a device info dict, tries to guess the OS of the device.
-        Works with packet content - checks for common patterns in icmp packets.
-        """
-        for packet in self.packets:
-            if Ether in packet:
-                if packet[Ether].src == device_info["mac"] and ICMP in packet:
-                    raw_data = bytes(packet)
-                    if b"\x61\x62\x63\x64\x65\x66\x67\x68\x69" in raw_data:
-                        return "Windows"
-                    elif b"\x10\x11\x12\x13\x14\x15\x16\x17\x18" in raw_data:
-                        return "Linux"
-        return "Unknown"
+    
+    
     def __repr__(self):
         raise NotImplementedError
     def __str__(self):
@@ -123,14 +143,9 @@ class AnalyzeNetwork:
     
     
 if __name__ == "__main__":
-    analyzer = AnalyzeNetwork("pcaps/pcap-02.pcapng")
+    analyzer = AnalyzeNetwork("pcaps/pcap-03.pcapng")
     print(analyzer.get_info())
     #print(analyzer.get_ips())
     #print(analyzer.get_macs())
-    for i in analyzer.get_macs():
-        print(i)
-        print(analyzer.get_info_by_mac(i))
-        print(f"from ttl: {analyzer.guess_os_from_ttl(analyzer.get_info_by_mac(i)[0])}")
-        print(f"from content: {analyzer.guess_os_from_content(analyzer.get_info_by_mac(i)[0])}")
     
     
