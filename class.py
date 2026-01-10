@@ -1,5 +1,6 @@
 from scapy.all import *
 import mac_vendor_lookup
+from scapy.layers.http import *
 
 class AnalyzeNetwork:
     def __init__(self, pcap_path):
@@ -63,19 +64,88 @@ class AnalyzeNetwork:
         device_info["mac"] = mac
         device_info["vendor"] = mac_vendor_lookup.MacLookup().lookup(mac)
         device_info["ip"] = []
-        device_info["os"] = {"from_ttl": "Unknown", "from_ping_payload": "Unknown"}
+        device_info["applications"] = []
+        device_info["os"] = {"from_ttl": "Unknown", "from_ping_payload": "Unknown", "from_user_agent": "Unknown"}
         
         packets_from_device, packets_to_device = self.find_all_packets_of_device(mac)
+        
         for packet in packets_from_device:
             if IP in packet:
                 if packet[IP].src not in device_info["ip"]:
                     device_info["ip"].append(packet[IP].src)
             self.guess_os_from_packet(device_info, packet)
+            if b"HTTP" in bytes(packet):
+                print(f"TEST!!!, {packet[IP].src}")
+                #print(packet.summary())
+                #packet.show()
+                http_layer = packet[Raw].load.decode(errors='ignore')
+                user_agent = ""
+                for line in http_layer.split("\r\n"):
+                    if "User-Agent:" in line:
+                        user_agent = line.split("User-Agent: ")[1]
+                print(http_layer)
+                print(f"!!!!!!user_agent is this: {user_agent}")
+                app = self.get_app_from_http(packet)
+                if app and app not in device_info["applications"]:
+                    device_info["applications"].append(self.get_app_from_http(packet))
+                '''
+                if "Windows" in user_agent:
+                    os_from_ua = "Windows"
+                elif "Linux" in user_agent:
+                        os_from_ua = "Linux"
+                else:
+                    os_from_ua = "Unknown"
+                self.update_device_os_field(device_info, "from_user_agent", os_from_ua)
+                '''
+                
+            
         for packet in packets_to_device:
             if IP in packet:
                 if packet[IP].dst not in device_info["ip"]:
                     device_info["ip"].append(packet[IP].dst)
         return device_info
+    
+    def get_app_from_http(self, packet):
+        """
+        tries to get the application from the HTTP packet
+        """
+        user_agent = ""
+        server = ""
+        if Raw in packet:
+            http_layer = packet[Raw].load.decode(errors='ignore')
+            for line in http_layer.split("\r\n"):
+                if "User-Agent:" in line:
+                    user_agent = line.split("User-Agent: ")[1]
+                if "Server:" in line:
+                    server = line.split("Server: ")[1]  
+        if server:
+            return server
+        elif user_agent:
+            return self.browser_from_http_user_agent(user_agent)
+        return "Unknown"
+    
+    def browser_from_http_user_agent(self, user_agent):
+        """
+        tries to get the browser from the user agent string.
+        """
+        if "Edg" in user_agent:
+            return "Edge"
+        elif "Opr" in user_agent:
+            return "Opera"
+        elif "Samsung" in user_agent:
+            return "Samsung Browser"
+        elif "UCBrowser" in user_agent:
+            return "UC Browser"
+        elif "Firefox" in user_agent:
+            return "Firefox"
+        elif "Safari" in user_agent and "Chrome" not in user_agent:
+            return "Safari"
+        elif "Chrome" in user_agent:
+            return "Chrome"
+        elif "MSIE" in user_agent or "Trident" in user_agent:
+            return "Internet Explorer"
+        else:
+            return "Unknown"
     
     def guess_os_from_packet(self, device_info, packet):
         """
@@ -99,6 +169,20 @@ class AnalyzeNetwork:
             else:
                 os_from_content = "Unknown"
             self.update_device_os_field(device_info, "from_ping_payload", os_from_content)
+        
+        if Raw in packet and b"HTTP" in bytes(packet):
+            http_layer = packet[Raw].load.decode(errors='ignore')
+            user_agent = ""
+            for line in http_layer.split("\r\n"):
+                if "User-Agent:" in line:
+                    user_agent = line.split("User-Agent: ")[1]
+            if "Windows" in user_agent:
+                os_from_ua = "Windows"
+            elif "Linux" in user_agent:
+                os_from_ua = "Linux"
+            else:
+                os_from_ua = "Unknown"
+            self.update_device_os_field(device_info, "from_user_agent", os_from_ua)
     
     def update_device_os_field(self, device_info, field, new_value):
         """
