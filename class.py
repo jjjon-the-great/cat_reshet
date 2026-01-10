@@ -65,6 +65,8 @@ class AnalyzeNetwork:
                     device_info["ip"] = packet[ARP].psrc
                 else:
                     device_info["ip"] = "Unknown"
+                device_info["os_from_ttl"] = self.guess_os_from_ttl(device_info)
+                device_info["os_from_ping_payload"] = self.guess_os_from_content(device_info)
                 if device_info not in devices_array:
                     devices_array.append(device_info)
                 #receiver info
@@ -80,10 +82,12 @@ class AnalyzeNetwork:
                     device_info["ip"] = packet[ARP].pdst
                 else:
                     device_info["ip"] = "Unknown"
+                device_info["os_from_ttl"] = self.guess_os_from_ttl(device_info)
+                device_info["os_from_ping_payload"] = self.guess_os_from_content(device_info)
                 if device_info not in devices_array:
                     devices_array.append(device_info)
         return devices_array
-    def guess_os(self, device_info):
+    def guess_os_from_ttl(self, device_info):
         """
         Given a device info dict, tries to guess the OS of the device.
         Works with ttl - if ttl>64 its windows, else probably linux.
@@ -96,7 +100,22 @@ class AnalyzeNetwork:
                         if ttl > 64:
                             return "Windows"
                         else:
-                            return "Linux/Unix"
+                            return "Linux/Windows"
+        return "Unknown"
+    def guess_os_from_content(self, device_info):
+        """
+        Given a device info dict, tries to guess the OS of the device.
+        Works with packet content - checks for common patterns in icmp packets.
+        """
+        for packet in self.packets:
+            if Ether in packet:
+                if packet[Ether].src == device_info["mac"] and ICMP in packet:
+                    raw_data = bytes(packet)
+                    if b"\x61\x62\x63\x64\x65\x66\x67\x68\x69" in raw_data:
+                        return "Windows"
+                    elif b"\x10\x11\x12\x13\x14\x15\x16\x17\x18" in raw_data:
+                        return "Linux"
+        return "Unknown"
     def __repr__(self):
         raise NotImplementedError
     def __str__(self):
@@ -104,12 +123,14 @@ class AnalyzeNetwork:
     
     
 if __name__ == "__main__":
-    analyzer = AnalyzeNetwork("pcaps/pcap-01.pcapng")
+    analyzer = AnalyzeNetwork("pcaps/pcap-02.pcapng")
     print(analyzer.get_info())
-    print(analyzer.get_ips())
-    print(analyzer.get_macs())
+    #print(analyzer.get_ips())
+    #print(analyzer.get_macs())
     for i in analyzer.get_macs():
         print(i)
-        print(analyzer.guess_os(analyzer.get_info_by_mac(i)[0]))
+        print(analyzer.get_info_by_mac(i))
+        print(f"from ttl: {analyzer.guess_os_from_ttl(analyzer.get_info_by_mac(i)[0])}")
+        print(f"from content: {analyzer.guess_os_from_content(analyzer.get_info_by_mac(i)[0])}")
     
     
